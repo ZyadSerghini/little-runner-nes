@@ -42,6 +42,15 @@ oam = $0200
 ; =========================
 .segment "CODE"
 
+; =========================
+; PALETTE
+; =========================
+palette:
+.byte $0F,$30,$21,$11
+.byte $0F,$00,$00,$00
+.byte $0F,$00,$00,$00
+.byte $0F,$00,$00,$00
+
 ; -------------------------
 ; Controller
 ; -------------------------
@@ -72,7 +81,7 @@ nmi:
     sta $2003
 
     lda #$02        ; page $0200
-    sta $4014       ; DMA
+    sta $4014       ; DMA transfer
 
     inc frame_ready
     rti
@@ -96,6 +105,24 @@ vblank1:
 vblank2:
     bit $2002
     bpl vblank2
+
+; -------------------------
+; Load sprite palette ($3F10)
+; -------------------------
+    lda $2002
+
+    lda #$3F
+    sta $2006
+    lda #$10
+    sta $2006
+
+    ldx #0
+load_palette:
+    lda palette, x
+    sta $2007
+    inx
+    cpx #$10
+    bne load_palette
 
 ; Enable NMI + rendering
     lda #%10000000
@@ -197,7 +224,7 @@ in_air:
     lda #$00
     sta oam+1
 
-    lda #$00
+    lda #%00000000
     sta oam+2
 
     lda player_x
@@ -215,9 +242,8 @@ in_air:
 .addr reset
 .addr 0
 
-
 ; =========================
-; CHR (simple square)
+; CHR (solid square tile)
 ; =========================
 .segment "CHARS"
 
