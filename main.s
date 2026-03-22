@@ -184,7 +184,8 @@ not_left:
     and #%10000000
     beq no_jump
 
-    lda player_vy
+    lda player_y
+    cmp #$A0
     bne no_jump
 
     lda #$F8
