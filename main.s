@@ -57,9 +57,9 @@ palette:
 .byte $0F,$00,$00,$00
 
 palette_bg:
-.byte $0F,$2C,$2A,$05
-.byte $0F,$00,$00,$00
-.byte $0F,$00,$00,$00
+.byte $21,$09,$06,$15
+.byte $0F,$09,$06,$28
+.byte $0F,$30,$26,$05
 .byte $0F,$00,$00,$00
 
 ; -------------------------
@@ -157,19 +157,24 @@ sta $2006
 lda #$00
 sta $2006
 
-; fill 30 rows (32 tiles each)
+    lda $2002        ; reset latch
+    lda #$20
+    sta $2006
+    lda #$00
+    sta $2006        ; start at $2000
 
-ldy #30
-row_loop:
-    ldx #32
-col_loop:
-    lda #BG_SKY
+    ldx #$00
+    ldy #$04         ; 4 × 256 = 1024 bytes
+
+load_nametable:
+    lda nametable, x
     sta $2007
-    dex
-    bne col_loop
+    inx
+    bne load_nametable
 
+    inc load_nametable+2   ; move to next page
     dey
-    bne row_loop
+    bne load_nametable
 
 ; Enable NMI + rendering
     lda #%10000000
@@ -289,6 +294,14 @@ in_air:
 .addr nmi
 .addr reset
 .addr 0
+
+; =========================
+; NAMETABLE DATA
+; =========================
+.segment "RODATA"
+
+nametable:
+.incbin "nametable.nam"
 
 ; =========================
 ; CHR (solid square tile)
