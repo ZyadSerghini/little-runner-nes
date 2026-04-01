@@ -16,11 +16,15 @@
 ; =========================
 .segment "ZEROPAGE"
 
-frame_ready: .res 1
+frame_ready: .res 1 ; has a new frame started?
 player_x:    .res 1
 player_y:    .res 1
 player_vy:   .res 1
+sprite_offset: .res 1
 buttons:     .res 1
+
+ptr_lo:      .res 1   ; NEW
+ptr_hi:      .res 1   ; NEW
 
 
 ; =========================
@@ -36,11 +40,6 @@ buttons:     .res 1
 
 oam = $0200
 
-;CONSTANTS
-
-BG_SKY = $20
-BG_GROUND = $21
-
 
 ; =========================
 ; CODE
@@ -48,7 +47,7 @@ BG_GROUND = $21
 .segment "CODE"
 
 ; =========================
-; PALETTE
+; PALETTES
 ; =========================
 palette:
 .byte $0D,$06,$15,$26
@@ -57,28 +56,33 @@ palette:
 .byte $0F,$00,$00,$00
 
 palette_bg:
-.byte $21,$09,$06,$15
-.byte $0F,$09,$06,$28
-.byte $0F,$30,$26,$05
-.byte $0F,$00,$00,$00
+.byte $21,$09,$06,$27 ; FIXED universal color
+.byte $0F,$30,$21,$00
+.byte $0F,$09,$06,$15
+.byte $0F,$09,$15,$27
+
 
 ; -------------------------
-; Controller routines
+; Controller
 ; -------------------------
 read_controller:
+    ; reset controller
     lda #1
-    sta $4016
+    sta $4016 ; takes a snapshot of all current button states
     lda #0
-    sta $4016
+    sta $4016 ; starts sending those buttoms one by one
 
+    ; clear previous input
     lda #0
     sta buttons
 
+    ; set loop counter
     ldx #8
+
 read_loop:
     lda $4016
-    lsr a
-    rol buttons
+    lsr a ;shifts a to the right, bit 0 goes to carry flag
+    rol buttons ;shift left w/ carry: carry goes to bit 0 and everything gets shifted to the left
     dex
     bne read_loop
     rts
@@ -88,40 +92,47 @@ read_loop:
 ; NMI
 ; -------------------------
 nmi:
-    lda #$00
-    sta $2003
+    ; start writing sprites in the OAM at index 0
+    lda #$00 
+    sta $2003 
 
-    lda #$02        ; page $0200
-    sta $4014       ; DMA transfer
+    ; copy 256 bytes from CPU RAM to VRAM ($02 -> $0200, NES copies from $0200 to $02FF)
+    lda #$02 ; 
+    sta $4014 ; DMA trigger for sprites
 
     inc frame_ready
-    rti
+    rti ; return from interrupt
 
 
 ; -------------------------
 ; RESET
 ; -------------------------
 reset:
-    sei
-    cld
+    sei ; disable interrupts
+    cld ; disable decimal mode
 
-    ldx #$FF
-    txs
+    ldx #$FF ; prepare stack pointer value, load x register to $FF 
+    txs ; transfer X to stack pointer (initialize it)
+    ; stack pointer goes from $0100 to $01FF
 
 ; Wait for PPU
 vblank1:
-    bit $2002
-    bpl vblank1
+    bit $2002 ; copies bit 7 to N flag and bit 6 to V flag, if Vblank active N = 1, N = 0 otherwise
+    bpl vblank1 ;branches if N = 0
+    ; $2002 = PPU status register, bit 7 = Vblank flag
 
 vblank2:
+    ; second check to make sure PPU is fully initialized and safe to use
     bit $2002
     bpl vblank2
 
-; -------------------------
-; Load sprite palette ($3F10)
-; -------------------------
-    lda $2002 ; Reset latch
 
+; -------------------------
+; Load sprite palette
+; -------------------------
+    lda $2002 ; resets PPU latch (first read = high byte, second = low byte)
+
+    ; set VRAM address to $3F10, next read/write action should occur there
     lda #$3F
     sta $2006
     lda #$10
@@ -129,21 +140,23 @@ vblank2:
 
     ldx #0
 load_palette:
-    lda palette, x
-    sta $2007
+    lda palette, x ; loads A with palette address + offset x
+    sta $2007 ; sends A to current PPU address
     inx
     cpx #$10
     bne load_palette
 
-;background
 
-lda $2002
-lda #$3F
-sta $2006
-lda #$00
-sta $2006
+; -------------------------
+; Load background palette
+; -------------------------
+    lda $2002
+    lda #$3F
+    sta $2006
+    lda #$00
+    sta $2006
 
-ldx #0
+    ldx #0
 bg_palette:
     lda palette_bg, x
     sta $2007
@@ -151,39 +164,71 @@ bg_palette:
     cpx #$10
     bne bg_palette
 
-lda $2002
-lda #$20
-sta $2006
-lda #$00
-sta $2006
 
-    lda $2002        ; reset latch
+; -------------------------
+; Load nametable
+; -------------------------
+    ; stores low byte of nametable address
+    lda #<nametable
+    sta ptr_lo
+    ; stores high byte of nametable address
+    lda #>nametable
+    sta ptr_hi
+
+    lda $2002 ; resets PPU latch
+
+    ; sets PPU internal address (VRAM) to $2006
     lda #$20
     sta $2006
     lda #$00
-    sta $2006        ; start at $2000
+    sta $2006
 
-    ldx #$00
-    ldy #$04         ; 4 × 256 = 1024 bytes
+    ldy #$00
+    ldx #$04          ; 1024 bytes
 
-load_nametable:
-    lda nametable, x
-    sta $2007
-    inx
-    bne load_nametable
+; copies 1024 bytes of nametable to VRAM
+load_nt:
+    lda (ptr_lo), y
+    sta $2007 ; write to VRAM
+    iny
+    bne load_nt
 
-    inc load_nametable+2   ; move to next page
-    dey
-    bne load_nametable
+    inc ptr_hi
+    dex
+    bne load_nt
 
-; Enable NMI + rendering
-    lda #%10000000
+
+; -------------------------
+; Enable rendering
+; -------------------------
+
+    ; PPU control (rendering params)
+    lda #%10010000
     sta $2000
 
+    ; bit 7 = Generate NMI at start of VBlank (1 = enabled)
+    ; bit 6 = PPU master/slave select, irrelevant here (0 = disabled)
+    ; bit 5 = sprite size [8x8/8x16] (0 = 8x8)
+    ; bit 4 = background pattern table address [$0000/$1000] (1 = $1000)
+    ; bit 3 = sprite pattern table address [$0000/$1000] (0 = $0000)
+    ; bit 2 = VRAM address increment after read/write PPU data at address $2007 [increment by 1/32] (0 = increment by 1)
+    ; bit 1-0 = base nametable address [$2000/$2400/$2800/$2C00] (00 = $2000)
+
+    ; PPU mask
     lda #%00011110
     sta $2001
 
+    ; bit 7-5 = color effects (0 = off, no color emphasis)
+    ; bit 4 = show sprites (1 = on)
+    ; bit 3 = show background
+    ; bit 2 = show sprites in leftmost 8px
+    ; bit 1 = show background in leftmost 8 px
+    ; bit 0 = grayscale (0 = off)
+
+
+; -------------------------
 ; Init variables
+; -------------------------
     lda #0
     sta frame_ready
 
@@ -194,9 +239,13 @@ load_nametable:
     lda #0
     sta player_vy
 
+
+; -------------------------
 ; Clear OAM
+; -------------------------
     lda #$FF
     ldx #0
+; clear all sprite entries in OAM
 clear_oam:
     sta oam, x
     inx
@@ -210,12 +259,14 @@ forever:
 
 wait_frame:
     lda frame_ready
-    beq wait_frame
+    beq wait_frame ; stops when frame_ready == 1 
 
+    ; resets frame_ready to 0
     lda #0
     sta frame_ready
 
     jsr read_controller
+
 
 ; RIGHT
     lda buttons
@@ -224,6 +275,7 @@ wait_frame:
     inc player_x
 not_right:
 
+
 ; LEFT
     lda buttons
     and #%00000010
@@ -231,30 +283,34 @@ not_right:
     dec player_x
 not_left:
 
+
 ; JUMP
     lda buttons
     and #%10000000
     beq no_jump
 
     lda player_y
-    cmp #$A0
+    cmp #$A0 ; compares to Y position on the ground
     bne no_jump
 
-    lda #$F8
+    lda #$F8 ; sets player's velocity to -8 (unsigned)
     sta player_vy
 no_jump:
 
-; GRAVITY
+
+; GRAVITY (velocity += 1 every frame)
     lda player_vy
     clc
     adc #1
     sta player_vy
+
 
 ; APPLY Y
     lda player_y
     clc
     adc player_vy
     sta player_y
+
 
 ; GROUND
     lda player_y
@@ -268,13 +324,15 @@ no_jump:
     sta player_vy
 in_air:
 
+
 ; -------------------------
-; SPRITE (OAM)
+; SPRITE
 ; -------------------------
+
     lda player_y
     sta oam
 
-    lda #$00
+    lda sprite_offset
     sta oam+1
 
     lda #%00000000
@@ -282,6 +340,7 @@ in_air:
 
     lda player_x
     sta oam+3
+
 
     jmp forever
 
@@ -295,6 +354,7 @@ in_air:
 .addr reset
 .addr 0
 
+
 ; =========================
 ; NAMETABLE DATA
 ; =========================
@@ -303,8 +363,9 @@ in_air:
 nametable:
 .incbin "nametable.nam"
 
+
 ; =========================
-; CHR (solid square tile)
+; CHR
 ; =========================
 .segment "CHARS"
 
