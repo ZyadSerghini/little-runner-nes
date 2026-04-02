@@ -23,6 +23,7 @@ player_vy:   .res 1
 sprite_offset: .res 1
 buttons:     .res 1
 
+frame_counter: .res 1
 
 ptr_lo:      .res 1
 ptr_hi:      .res 1
@@ -271,7 +272,29 @@ wait_frame:
 
     jsr read_controller
 
+    lda frame_counter
+    clc
+    adc #1
+    sta frame_counter
 
+    cmp #30
+    bne input
+
+    lda #0
+    sta frame_counter
+
+    lda sprite_offset
+    clc
+    adc #2
+
+    cmp #8
+    bne incr_sprite_offset
+    lda #0
+
+    incr_sprite_offset:
+        sta sprite_offset
+
+input:
 ; RIGHT
     lda buttons
     and #%00000001
