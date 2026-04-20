@@ -456,3 +456,7 @@ nametable:
 .segment "CHARS"
 
 .incbin "graphics.chr"
+
+; Unit 1: comparison NES and megadrive
+; Unit 2: inject my own code
+; Unit 3: prevent stun bug
