@@ -2,6 +2,8 @@
 
 ![Game Demo](img/demo.gif)
 
+🗃️ **This project has been made as an honors assignment for my Computer Organization & Architecture class.**
+
 To play the game, simply run **game.nes** in an NES emulator such as [FCEUX](https://fceux.com/web/home.html).
 
 *Clicking on an image will redirect you to its source.*
